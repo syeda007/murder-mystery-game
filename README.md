@@ -1,6 +1,6 @@
 # 🕵️ Murder Mystery Game Master
 
-An interactive murder mystery game master and detective simulator built with **React 19, TypeScript, Tailwind CSS, Express, and Google Gemini AI**.
+An interactive murder mystery game master and detective simulator built with **React 19, TypeScript, Tailwind CSS, Express, and either Google Gemini or OpenAI**.
 
 Play as the lead detective exploring crime scenes, interrogating suspects with dynamic AI dialogue, connecting forensic clues on an evidence corkboard, or use the **Party Game Master Mode** to host unforgettable murder mystery game nights for your friends!
 
@@ -22,9 +22,34 @@ Play as the lead detective exploring crime scenes, interrogating suspects with d
 ## 🚀 Tech Stack
 
 - **Frontend**: React 19, TypeScript, Tailwind CSS v4, Motion, Lucide Icons, Canvas Confetti
-- **Backend / API**: Express 4, `@google/genai` SDK with `gemini-3.7-flash`
+- **Backend / API**: Express 4, with a swappable AI layer (`lib/ai-service.ts`) backed by either `@google/genai` (`gemini-3.7-flash`) or `openai` (`gpt-4o`)
 - **Build Tool**: Vite 6, `tsx`, `esbuild`
 - **Audio Engine**: Web Audio API Procedural Synthesizer
+
+---
+
+## 🤖 AI Provider Configuration
+
+The game's AI features (suspect interrogation, case generation, GM hints, and verdict narration) run through a single abstraction layer at [`lib/ai-service.ts`](lib/ai-service.ts), so you can switch between Gemini and OpenAI without touching any game logic.
+
+Set these in your `.env`:
+
+```env
+# 'gemini' or 'openai' — defaults to 'gemini' if unset
+AI_PROVIDER=gemini
+
+# Provide the key for whichever provider you select
+GEMINI_API_KEY=your_gemini_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Optional: if 'true', automatically retries with the other provider
+# when the primary provider's request fails (requires both keys to be set)
+AI_FALLBACK=false
+```
+
+- **Gemini** uses the `gemini-3.7-flash` model via the `@google/genai` SDK.
+- **OpenAI** uses the `gpt-4o` model via the `openai` SDK, with JSON responses requested through `response_format: json_schema`.
+- Both providers implement the same `IAIService.generateResponse(prompt, options)` interface, so `temperature`, `maxTokens`, `systemInstruction`, and `responseSchema` are mapped to whichever provider is active. If no API key is configured for the selected provider, endpoints fall back to their existing offline/procedural behavior — nothing changes in the game itself.
 
 ---
 
@@ -42,8 +67,9 @@ npm install
 ```
 
 ### 3. Configure Environment Variables
-Create a `.env` file in the root directory:
+Create a `.env` file in the root directory (see [AI Provider Configuration](#-ai-provider-configuration) above):
 ```env
+AI_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
@@ -70,7 +96,9 @@ git push -u origin main
 2. Open [Vercel Dashboard](https://vercel.com) and click **"Add New Project"**.
 3. Import your GitHub repository.
 4. Under **Project Settings > Environment Variables**, add:
-   - `GEMINI_API_KEY`: Your Google Gemini API Key.
+   - `AI_PROVIDER`: `gemini` or `openai`.
+   - `GEMINI_API_KEY`: Your Google Gemini API Key (if using Gemini).
+   - `OPENAI_API_KEY`: Your OpenAI API Key (if using OpenAI).
 5. Click **Deploy**.
 
 ---
