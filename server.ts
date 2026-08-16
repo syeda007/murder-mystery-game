@@ -1,8 +1,8 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { getAIService, SchemaType } from "./lib/ai-service";
 
 dotenv.config();
 
@@ -11,30 +11,17 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Lazy-initialized Gemini client with required headers
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  return new GoogleGenAI({
-    apiKey: apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-}
-
 // Health check endpoint
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString(), aiReady: !!process.env.GEMINI_API_KEY });
+  const ai = getAIService();
+  res.json({ status: "ok", time: new Date().toISOString(), aiReady: !!ai, aiProvider: ai?.provider ?? null });
 });
 
 // 1. Dynamic AI Suspect Interrogation Endpoint
 app.post("/api/interrogate", async (req, res) => {
   try {
     const { caseContext, suspect, question, presentedClue, history } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIService();
 
     if (!ai) {
       // Fallback procedural smart response if no API key configured
@@ -95,34 +82,29 @@ Recent dialogue history: ${JSON.stringify((history || []).slice(-4))}
 
 Respond strictly in JSON matching the requested schema.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: contents,
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            text: {
-              type: Type.STRING,
-              description: "The suspect's direct in-character spoken dialogue and physical reaction",
-            },
-            stressChange: {
-              type: Type.INTEGER,
-              description: "Change in stress level (-10 to +35 based on pressure applied and clue validity)",
-            },
-            secretUnlocked: {
-              type: Type.BOOLEAN,
-              description: "Whether this interaction cracked their hidden secret",
-            },
-            subtleSlipUp: {
-              type: Type.STRING,
-              description: "A subtle contradiction or psychological slip-up noticed by the detective, or null if composed",
-            }
+    const response = await ai.generateResponse(contents, {
+      systemInstruction: systemPrompt,
+      responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+          text: {
+            type: SchemaType.STRING,
+            description: "The suspect's direct in-character spoken dialogue and physical reaction",
           },
-          required: ["text", "stressChange", "secretUnlocked"],
-        }
+          stressChange: {
+            type: SchemaType.INTEGER,
+            description: "Change in stress level (-10 to +35 based on pressure applied and clue validity)",
+          },
+          secretUnlocked: {
+            type: SchemaType.BOOLEAN,
+            description: "Whether this interaction cracked their hidden secret",
+          },
+          subtleSlipUp: {
+            type: SchemaType.STRING,
+            description: "A subtle contradiction or psychological slip-up noticed by the detective, or null if composed",
+          }
+        },
+        required: ["text", "stressChange", "secretUnlocked"],
       }
     });
 
@@ -144,10 +126,10 @@ Respond strictly in JSON matching the requested schema.`;
 app.post("/api/generate-case", async (req, res) => {
   try {
     const { theme, era, difficulty, customPrompt } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIService();
 
     if (!ai) {
-      return res.status(400).json({ error: "Gemini API Key is not configured on the server." });
+      return res.status(400).json({ error: "AI provider API key is not configured on the server." });
     }
 
     const prompt = `Generate a complete, deeply engaging, solvable Murder Mystery Game Case.
@@ -165,57 +147,53 @@ Requirements:
 - Complete verifiable Solution with culpritId, murder weapon, true motive, how alibi was broken, and an atmospheric epilogue.
 - 3 Party Mode Rounds with Game Master narration scripts and private suspect prompts.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: "You are the Master Storyteller and Architect of Murder Mysteries. Create rich, logically consistent, immersive detective cases.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
+    const response = await ai.generateResponse(prompt, {
+      systemInstruction: "You are the Master Storyteller and Architect of Murder Mysteries. Create rich, logically consistent, immersive detective cases.",
+      responseSchema: {
+          type: SchemaType.OBJECT,
           properties: {
-            id: { type: Type.STRING },
-            title: { type: Type.STRING },
-            subtitle: { type: Type.STRING },
-            era: { type: Type.STRING },
-            setting: { type: Type.STRING },
-            difficulty: { type: Type.STRING },
-            estimatedTime: { type: Type.STRING },
-            summary: { type: Type.STRING },
+            id: { type: SchemaType.STRING },
+            title: { type: SchemaType.STRING },
+            subtitle: { type: SchemaType.STRING },
+            era: { type: SchemaType.STRING },
+            setting: { type: SchemaType.STRING },
+            difficulty: { type: SchemaType.STRING },
+            estimatedTime: { type: SchemaType.STRING },
+            summary: { type: SchemaType.STRING },
             victim: {
-              type: Type.OBJECT,
+              type: SchemaType.OBJECT,
               properties: {
-                name: { type: Type.STRING },
-                title: { type: Type.STRING },
-                age: { type: Type.INTEGER },
-                backstory: { type: Type.STRING },
-                causeOfDeath: { type: Type.STRING },
-                timeOfDeath: { type: Type.STRING },
-                locationFound: { type: Type.STRING },
-                autopsyNotes: { type: Type.STRING }
+                name: { type: SchemaType.STRING },
+                title: { type: SchemaType.STRING },
+                age: { type: SchemaType.INTEGER },
+                backstory: { type: SchemaType.STRING },
+                causeOfDeath: { type: SchemaType.STRING },
+                timeOfDeath: { type: SchemaType.STRING },
+                locationFound: { type: SchemaType.STRING },
+                autopsyNotes: { type: SchemaType.STRING }
               },
               required: ["name", "title", "causeOfDeath", "timeOfDeath", "locationFound"]
             },
             rooms: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  id: { type: Type.STRING },
-                  name: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  atmosphere: { type: Type.STRING },
-                  searched: { type: Type.BOOLEAN },
+                  id: { type: SchemaType.STRING },
+                  name: { type: SchemaType.STRING },
+                  description: { type: SchemaType.STRING },
+                  atmosphere: { type: SchemaType.STRING },
+                  searched: { type: SchemaType.BOOLEAN },
                   itemsToSearch: {
-                    type: Type.ARRAY,
+                    type: SchemaType.ARRAY,
                     items: {
-                      type: Type.OBJECT,
+                      type: SchemaType.OBJECT,
                       properties: {
-                        id: { type: Type.STRING },
-                        name: { type: Type.STRING },
-                        description: { type: Type.STRING },
-                        clueId: { type: Type.STRING },
-                        searched: { type: Type.BOOLEAN }
+                        id: { type: SchemaType.STRING },
+                        name: { type: SchemaType.STRING },
+                        description: { type: SchemaType.STRING },
+                        clueId: { type: SchemaType.STRING },
+                        searched: { type: SchemaType.BOOLEAN }
                       },
                       required: ["id", "name", "description"]
                     }
@@ -225,96 +203,96 @@ Requirements:
               }
             },
             suspects: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  id: { type: Type.STRING },
-                  name: { type: Type.STRING },
-                  role: { type: Type.STRING },
-                  age: { type: Type.INTEGER },
-                  avatarSeed: { type: Type.STRING },
-                  personality: { type: Type.STRING },
-                  occupation: { type: Type.STRING },
-                  relationToVictim: { type: Type.STRING },
-                  publicAlibi: { type: Type.STRING },
-                  secret: { type: Type.STRING },
-                  secretUnlocked: { type: Type.BOOLEAN },
-                  motive: { type: Type.STRING },
-                  stressLevel: { type: Type.INTEGER },
-                  suspiciousnessRating: { type: Type.INTEGER },
-                  isCulprit: { type: Type.BOOLEAN },
-                  keyQuotes: { type: Type.ARRAY, items: { type: Type.STRING } }
+                  id: { type: SchemaType.STRING },
+                  name: { type: SchemaType.STRING },
+                  role: { type: SchemaType.STRING },
+                  age: { type: SchemaType.INTEGER },
+                  avatarSeed: { type: SchemaType.STRING },
+                  personality: { type: SchemaType.STRING },
+                  occupation: { type: SchemaType.STRING },
+                  relationToVictim: { type: SchemaType.STRING },
+                  publicAlibi: { type: SchemaType.STRING },
+                  secret: { type: SchemaType.STRING },
+                  secretUnlocked: { type: SchemaType.BOOLEAN },
+                  motive: { type: SchemaType.STRING },
+                  stressLevel: { type: SchemaType.INTEGER },
+                  suspiciousnessRating: { type: SchemaType.INTEGER },
+                  isCulprit: { type: SchemaType.BOOLEAN },
+                  keyQuotes: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } }
                 },
                 required: ["id", "name", "role", "publicAlibi", "secret", "motive", "isCulprit"]
               }
             },
             clues: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  id: { type: Type.STRING },
-                  name: { type: Type.STRING },
-                  category: { type: Type.STRING },
-                  importance: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  details: { type: Type.STRING },
-                  locationId: { type: Type.STRING },
-                  locationName: { type: Type.STRING },
-                  discovered: { type: Type.BOOLEAN },
-                  relatedSuspectId: { type: Type.STRING },
-                  contradictionHint: { type: Type.STRING }
+                  id: { type: SchemaType.STRING },
+                  name: { type: SchemaType.STRING },
+                  category: { type: SchemaType.STRING },
+                  importance: { type: SchemaType.STRING },
+                  description: { type: SchemaType.STRING },
+                  details: { type: SchemaType.STRING },
+                  locationId: { type: SchemaType.STRING },
+                  locationName: { type: SchemaType.STRING },
+                  discovered: { type: SchemaType.BOOLEAN },
+                  relatedSuspectId: { type: SchemaType.STRING },
+                  contradictionHint: { type: SchemaType.STRING }
                 },
                 required: ["id", "name", "category", "importance", "description", "details", "locationId"]
               }
             },
             timeline: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  id: { type: Type.STRING },
-                  time: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  location: { type: Type.STRING },
-                  suspectId: { type: Type.STRING },
-                  suspectName: { type: Type.STRING },
-                  isContradiction: { type: Type.BOOLEAN },
-                  verified: { type: Type.BOOLEAN }
+                  id: { type: SchemaType.STRING },
+                  time: { type: SchemaType.STRING },
+                  description: { type: SchemaType.STRING },
+                  location: { type: SchemaType.STRING },
+                  suspectId: { type: SchemaType.STRING },
+                  suspectName: { type: SchemaType.STRING },
+                  isContradiction: { type: SchemaType.BOOLEAN },
+                  verified: { type: SchemaType.BOOLEAN }
                 },
                 required: ["id", "time", "description", "location"]
               }
             },
             solution: {
-              type: Type.OBJECT,
+              type: SchemaType.OBJECT,
               properties: {
-                culpritId: { type: Type.STRING },
-                culpritName: { type: Type.STRING },
-                murderWeapon: { type: Type.STRING },
-                trueMotive: { type: Type.STRING },
-                howAlibiWasBroken: { type: Type.STRING },
-                fullEpilogue: { type: Type.STRING }
+                culpritId: { type: SchemaType.STRING },
+                culpritName: { type: SchemaType.STRING },
+                murderWeapon: { type: SchemaType.STRING },
+                trueMotive: { type: SchemaType.STRING },
+                howAlibiWasBroken: { type: SchemaType.STRING },
+                fullEpilogue: { type: SchemaType.STRING }
               },
               required: ["culpritId", "culpritName", "murderWeapon", "trueMotive", "howAlibiWasBroken", "fullEpilogue"]
             },
             partyRounds: {
-              type: Type.ARRAY,
+              type: SchemaType.ARRAY,
               items: {
-                type: Type.OBJECT,
+                type: SchemaType.OBJECT,
                 properties: {
-                  roundNumber: { type: Type.INTEGER },
-                  title: { type: Type.STRING },
-                  gmNarration: { type: Type.STRING },
-                  objectives: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  publicClueReveal: { type: Type.STRING },
+                  roundNumber: { type: SchemaType.INTEGER },
+                  title: { type: SchemaType.STRING },
+                  gmNarration: { type: SchemaType.STRING },
+                  objectives: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                  publicClueReveal: { type: SchemaType.STRING },
                   suspectActions: {
-                    type: Type.ARRAY,
+                    type: SchemaType.ARRAY,
                     items: {
-                      type: Type.OBJECT,
+                      type: SchemaType.OBJECT,
                       properties: {
-                        suspectId: { type: Type.STRING },
-                        privatePrompt: { type: Type.STRING }
+                        suspectId: { type: SchemaType.STRING },
+                        privatePrompt: { type: SchemaType.STRING }
                       },
                       required: ["suspectId", "privatePrompt"]
                     }
@@ -326,7 +304,6 @@ Requirements:
           },
           required: ["id", "title", "subtitle", "era", "setting", "difficulty", "victim", "rooms", "suspects", "clues", "timeline", "solution", "partyRounds"]
         }
-      }
     });
 
     const parsedCase = JSON.parse(response.text || "{}");
@@ -362,7 +339,7 @@ Requirements:
 app.post("/api/gm-hint", async (req, res) => {
   try {
     const { caseContext, discoveredClues, interrogatedSuspects } = req.body;
-    const ai = getGeminiClient();
+    const ai = getAIService();
 
     if (!ai) {
       return res.json({
@@ -380,20 +357,15 @@ True Solution: Culprit is ${caseContext?.solution?.culpritName}.
 
 Provide a subtle, atmospheric Game Master hint that does NOT spoil the culprit directly, but guides the detective's focus to an overlooked contradiction, unexamined room, or psychological tension.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: "You are an atmospheric Noir Game Master guiding an investigative sleuth.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            hint: { type: Type.STRING, description: "Subtle deductive guidance" },
-            atmosphericObservation: { type: Type.STRING, description: "Atmospheric sensory description of the scene" }
-          },
-          required: ["hint", "atmosphericObservation"]
-        }
+    const response = await ai.generateResponse(prompt, {
+      systemInstruction: "You are an atmospheric Noir Game Master guiding an investigative sleuth.",
+      responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+          hint: { type: SchemaType.STRING, description: "Subtle deductive guidance" },
+          atmosphericObservation: { type: SchemaType.STRING, description: "Atmospheric sensory description of the scene" }
+        },
+        required: ["hint", "atmosphericObservation"]
       }
     });
 
@@ -430,7 +402,7 @@ app.post("/api/evaluate-accusation", async (req, res) => {
     else if (score >= 50) rank = 'Sharp Investigator';
     else if (score >= 30) rank = 'Novice Constable';
 
-    const ai = getGeminiClient();
+    const ai = getAIService();
     let critique = "";
     let confessionNarrative = solution?.fullEpilogue || "";
 
@@ -454,12 +426,8 @@ Write a 2-paragraph dramatic noir climax:
 Paragraph 1: The Detective's confrontation in front of all gathered suspects and the suspect's reaction.
 Paragraph 2: The final verdict, either unmasking the true criminal with confession or describing the tragic misdirection if the wrong person was accused.`;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
-          contents: evalPrompt,
-          config: {
-            systemInstruction: "You are the dramatic narrator of a classic mystery climax."
-          }
+        const response = await ai.generateResponse(evalPrompt, {
+          systemInstruction: "You are the dramatic narrator of a classic mystery climax."
         });
         critique = response.text || "";
       } catch (err) {
